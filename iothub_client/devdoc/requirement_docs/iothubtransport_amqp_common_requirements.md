@@ -413,22 +413,61 @@ int IoTHubTransport_AMQP_Common_SetRetryPolicy(TRANSPORT_LL_HANDLE handle, IOTHU
 
 ### IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin
 ```c
-int IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin(IOTHUB_DEVICE_HANDLE handle, IOTHUB_DEVICE_TWIN_STATE subscribe_state)
+int IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin(IOTHUB_DEVICE_HANDLE handle)
 ```
 
-`IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin` subscribes to DeviceTwin's messages. Not implemented at the moment.
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_131: [**If `handle` is NULL, `IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin` shall fail and return non-zero.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_132: [**If `instance->twin_messenger` is NULL, it shall be set using twin_messenger_create()**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_133: [**If twin_messenger_create() fails, `IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin` shall fail and return non-zero.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_134: [**`IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin` shall invoke twin_messenger_subscribe(), passing `on_twin_state_update_callback`**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_135: [**If twin_messenger_subscribe() fails, `IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin` shall fail and return non-zero.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_136: [**If no errors occur, `IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin` shall return zero.**]**
 
-**SRS_IOTHUBTRANSPORT_AMQP_COMMON_02_009: [** `IoTHubTransport_AMQP_Common_Subscribe_DeviceTwin` shall return a non-zero value. **]**
+#### on_twin_state_update_callback
+```
+void on_twin_state_update_callback(TWIN_UPDATE_TYPE update_type, const char* payload, size_t size, void* context)
+``` 
+
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_137: [**If `context` is NULL, the callback shall return.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_138: [**If `update_type` is TWIN_UPDATE_TYPE_PARTIAL IoTHubClient_LL_RetrievePropertyComplete shall be invoked passing `context` as handle, `DEVICE_TWIN_UPDATE_PARTIAL`, `payload` and `size`.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_139: [**If `update_type` is TWIN_UPDATE_TYPE_COMPLETE IoTHubClient_LL_RetrievePropertyComplete shall be invoked passing `context` as handle, `DEVICE_TWIN_UPDATE_COMPLETE`, `payload` and `size`.**]**
 
 
 ### IoTHubTransport_AMQP_Common_Unsubscribe_DeviceTwin
 ```c
-void IoTHubTransport_AMQP_Common_Unsubscribe_DeviceTwin(IOTHUB_DEVICE_HANDLE handle, IOTHUB_DEVICE_TWIN_STATE subscribe_state)
+void IoTHubTransport_AMQP_Common_Unsubscribe_DeviceTwin(IOTHUB_DEVICE_HANDLE handle)
 ```
 
-`IoTHubTransport_AMQP_Common_Unsubscribe_DeviceTwin` unsubscribes from DeviceTwin's messages. Not implemented.
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_140: [**If `handle` is NULL, `IoTHubTransport_AMQP_Common_Unsubscribe_DeviceTwin` shall return.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_141: [**If `instance->twin_messenger` is NULL, `IoTHubTransport_AMQP_Common_Unsubscribe_DeviceTwin` shall return**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_142: [**`IoTHubTransport_AMQP_Common_Unsubscribe_DeviceTwin` shall invoke `twin_messenger_unsubscribe`**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_143: [**If `twin_messenger_unsubscribe` fails, the error shall be ignored**]**
 
-**SRS_IOTHUBTRANSPORT_AMQP_COMMON_02_010: [** `IoTHubTransport_AMQP_Common_Unsubscribe_DeviceTwin` shall return. **]**
+
+### IoTHubTransport_AMQP_Common_ProcessItem
+```c
+IOTHUB_PROCESS_ITEM_RESULT IoTHubTransport_AMQP_Common_ProcessItem(TRANSPORT_LL_HANDLE handle, IOTHUB_IDENTITY_TYPE item_type, IOTHUB_IDENTITY_INFO* iothub_item)
+```
+
+This function was introduced to be generic point for processing user requests, however it was been used only for device Twin. 
+
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_144: [**If `handle` or `iothub_item` are NULL, `IoTHubTransport_AMQP_Common_ProcessItem` shall fail and return IOTHUB_PROCESS_ERROR.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_145: [**If `item_type` is not IOTHUB_TYPE_DEVICE_TWIN, `IoTHubTransport_AMQP_Common_ProcessItem` shall fail and return IOTHUB_PROCESS_ERROR.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_146: [**If `instance->twin_messenger` is NULL, it shall be set using twin_messenger_create()**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_147: [**If `twin_messenger_create` fails, `IoTHubTransport_AMQP_Common_ProcessItem` shall fail and return IOTHUB_PROCESS_ERROR.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_148: [**`twin_messenger_report_state_async` shall be invoked passing `iothub_item->device_twin->report_data_handle` and `on_twin_report_state_complete_callback`**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_149: [**If `twin_messenger_report_state_async` fails, `IoTHubTransport_AMQP_Common_ProcessItem` shall fail and return IOTHUB_PROCESS_ERROR.**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_150: [**If no errors occur, `IoTHubTransport_AMQP_Common_ProcessItem` shall return IOTHUB_PROCESS_OK.**]**
+
+
+#### on_twin_report_state_complete_callback
+```c
+void on_twin_report_state_complete_callback(TWIN_REPORT_STATE_RESULT result, int status_code, void* context)
+```
+
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_151: [**If `context` is NULL, the callback shall return**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_152: [**`IoTHubClient_LL_ReportedStateComplete` shall be invoked passing `status_code` and `context` details**]**
+**SRS_IOTHUBTRANSPORT_AMQP_COMMON_09_153: [**The memory allocated for `context` shall be released**]**
 
 
 ### IoTHubTransport_AMQP_Common_Subscribe_DeviceMethod
