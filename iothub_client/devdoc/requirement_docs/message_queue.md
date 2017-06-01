@@ -147,11 +147,12 @@ void message_queue_do_work(MESSAGE_QUEUE_HANDLE message_queue);
 static void on_message_processing_completed_callback(MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, void* reason, void* context);
 ```
 
+**SRS_MESSAGE_QUEUE_09_069: [**If `message` or `context` are NULL, on_message_processing_completed_callback shall return immediately**]**
 **SRS_MESSAGE_QUEUE_09_044: [**If `message` is not present in `message_queue->in_progress`, it shall be ignored**]**
 **SRS_MESSAGE_QUEUE_09_045: [**If `message` is present in `message_queue->in_progress`, it shall be removed**]**
 **SRS_MESSAGE_QUEUE_09_046: [**If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` shall be incremented by 1**]**
-**SRS_MESSAGE_QUEUE_09_047: [**If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is less than `message_queue->max_retry_count`, the `message` shall be moved to `message_queue->pending` to be re-sent**]**
-**SRS_MESSAGE_QUEUE_09_048: [**If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is equal to `message_queue->max_retry_count`, result shall be changed to MESSAGE_QUEUE_ERROR**]**
+**SRS_MESSAGE_QUEUE_09_047: [**If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is less than or equal `message_queue->max_retry_count`, the `message` shall be moved to `message_queue->pending` to be re-sent**]**
+**SRS_MESSAGE_QUEUE_09_048: [**If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is greater than `message_queue->max_retry_count`, result shall be changed to MESSAGE_QUEUE_ERROR**]**
 **SRS_MESSAGE_QUEUE_09_049: [**Otherwise `message_queue->on_message_processing_completed_callback` shall be invoked passing `mq_item->message`, `result`, `reason` and `message_queue->on_message_processing_completed_context`**]**
 **SRS_MESSAGE_QUEUE_09_050: [**The `mq_item` related to `message` shall be freed**]**
 

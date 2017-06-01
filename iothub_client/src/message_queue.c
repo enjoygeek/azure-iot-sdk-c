@@ -72,8 +72,8 @@ static bool dequeue_message_and_fire_callback(MESSAGE_QUEUE_HANDLE message_queue
 				// Codes_SRS_MESSAGE_QUEUE_09_046: [If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` shall be incremented by 1]
 				mq_item->number_of_attempts++;
 
-				// Codes_SRS_MESSAGE_QUEUE_09_047: [If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is less than `message_queue->max_retry_count`, the `message` shall be moved to `message_queue->pending` to be re-sent]
-				if (mq_item->number_of_attempts < message_queue->max_retry_count)
+				// Codes_SRS_MESSAGE_QUEUE_09_047: [If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is less than or equal `message_queue->max_retry_count`, the `message` shall be moved to `message_queue->pending` to be re-sent]
+				if (mq_item->number_of_attempts <= message_queue->max_retry_count)
 				{
 					if (singlylinkedlist_add(message_queue->pending, (const void*)mq_item) == NULL)
 					{
@@ -87,7 +87,7 @@ static bool dequeue_message_and_fire_callback(MESSAGE_QUEUE_HANDLE message_queue
 				}
 				else
 				{
-					// Codes_SRS_MESSAGE_QUEUE_09_048: [If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is greater than or equal to `message_queue->max_retry_count`, result shall be changed to MESSAGE_QUEUE_ERROR]
+					// Codes_SRS_MESSAGE_QUEUE_09_048: [If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is greater than `message_queue->max_retry_count`, result shall be changed to MESSAGE_QUEUE_ERROR]
 					result = MESSAGE_QUEUE_ERROR;
 					is_retrying = false;
 				}
@@ -112,6 +112,8 @@ static bool dequeue_message_and_fire_callback(MESSAGE_QUEUE_HANDLE message_queue
 
 			break;
 		}
+		
+		list_item = singlylinkedlist_get_next_item(list_item);
 	}
 
 	return (list_item != NULL);
@@ -122,7 +124,12 @@ static void on_message_processing_completed_callback(MESSAGE_HANDLE message, MES
 {
 	MESSAGE_QUEUE_HANDLE message_queue = (MESSAGE_QUEUE_HANDLE)context;
 
-	if (!dequeue_message_and_fire_callback(message_queue, message_queue->in_progress, message, result, reason))
+	// Codes_SRS_MESSAGE_QUEUE_09_069: [If `message` or `context` are NULL, on_message_processing_completed_callback shall return immediately]
+	if (message == NULL || message_queue == NULL)
+	{
+		LogError("on_message_processing_completed_callback invoked with NULL arguments (message=%p, message_queue=%p)", message, message_queue);
+	}
+	else if (!dequeue_message_and_fire_callback(message_queue, message_queue->in_progress, message, result, reason))
 	{
 		LogError("on_message_processing_completed_callback invoked for message not in in-progress list (%p)", message);
 	}
@@ -225,11 +232,23 @@ static void process_pending_messages(MESSAGE_QUEUE_HANDLE message_queue)
 	{
 		MESSAGE_QUEUE_ITEM* mq_item = (MESSAGE_QUEUE_ITEM*)singlylinkedlist_item_get_value(list_item);
 
-		if (singlylinkedlist_remove(message_queue->pending, list_item) != 0)
+		if (mq_item == NULL)
+		{
+			LogError("internal error, failed to retrieve list node value");
+			break;
+		}
+		else if (singlylinkedlist_remove(message_queue->pending, list_item) != 0)
 		{
 			LogError("failed moving message out of pending list (%p)", mq_item->message);
+
 			// Codes_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `message_queue->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
-			on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, (void*)mq_item);
+			if (message_queue->on_message_processing_completed_callback != NULL)
+			{
+				message_queue->on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, message_queue->on_message_processing_completed_context);
+			}
+
+			// Not freeing since this would cause a memory A/V on the next call.
+
 			break; // Trying to avoid an infinite loop
 		}
 		// Codes_SRS_MESSAGE_QUEUE_09_040: [`mq_item->processing_start_time` shall be set using get_time()]
@@ -237,20 +256,32 @@ static void process_pending_messages(MESSAGE_QUEUE_HANDLE message_queue)
 		{
 			// Codes_SRS_MESSAGE_QUEUE_09_041: [If get_time() fails, `mq_item` shall be removed from `message_queue->in_progress`]
 			LogError("failed setting message processing_start_time (%p)", mq_item->message);
+
 			// Codes_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `message_queue->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
-			on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, (void*)mq_item);
+			if (message_queue->on_message_processing_completed_callback != NULL)
+			{
+				message_queue->on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, message_queue->on_message_processing_completed_context);
+			}
+
+			free(mq_item);
 		}
 		// Codes_SRS_MESSAGE_QUEUE_09_039: [Each `mq_item` in `message_queue->pending` shall be moved to `message_queue->in_progress`]
-		else if (singlylinkedlist_add(message_queue->in_progress, (const void*)mq_item) != 0)
+		else if (singlylinkedlist_add(message_queue->in_progress, (const void*)mq_item) == NULL)
 		{
 			LogError("failed moving message to in-progress list (%p)", mq_item->message);
+
 			// Codes_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `message_queue->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
-			on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, (void*)mq_item);
+			if (message_queue->on_message_processing_completed_callback != NULL)
+			{
+				message_queue->on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, message_queue->on_message_processing_completed_context);
+			}
+
+			free(mq_item);
 		}
 		else
 		{
 			// Codes_SRS_MESSAGE_QUEUE_09_043: [If no failures occur, `message_queue->on_process_message_callback` shall be invoked passing `mq_item->message` and `on_message_processing_completed_callback`]
-			message_queue->on_process_message_callback(mq_item->message, on_message_processing_completed_callback, (void*)mq_item);
+			message_queue->on_process_message_callback(mq_item->message, on_message_processing_completed_callback, (void*)message_queue);
 		}
 	}
 }
@@ -673,6 +704,14 @@ OPTIONHANDLER_HANDLE message_queue_retrieve_options(MESSAGE_QUEUE_HANDLE message
 		result = NULL;
 	}
 	else if (OptionHandler_AddOption(result, SAVED_OPTION_MAX_PROCESSING_TIME_SECS, &message_queue->max_message_processing_time_secs) != OPTIONHANDLER_OK)
+	{
+		LogError("failed retrieving options (failed adding %s)", SAVED_OPTION_MAX_PROCESSING_TIME_SECS);
+		// Codes_SRS_MESSAGE_QUEUE_09_067: [If message_queue_retrieve_options fails, any allocated memory shall be freed]
+		OptionHandler_Destroy(result);
+		// Codes_SRS_MESSAGE_QUEUE_09_066: [If OptionHandler_AddOption fails, message_queue_retrieve_options shall fail and return NULL]
+		result = NULL;
+	}
+	else if (OptionHandler_AddOption(result, SAVED_OPTION_MAX_RETRY_COUNT, &message_queue->max_retry_count) != OPTIONHANDLER_OK)
 	{
 		LogError("failed retrieving options (failed adding %s)", SAVED_OPTION_MAX_PROCESSING_TIME_SECS);
 		// Codes_SRS_MESSAGE_QUEUE_09_067: [If message_queue_retrieve_options fails, any allocated memory shall be freed]

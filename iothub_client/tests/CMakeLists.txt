@@ -40,6 +40,7 @@ add_unittest_directory(iothubmessage_ut)
 add_unittest_directory(iothubtransport_ut)
 add_unittest_directory(blob_ut)
 add_unittest_directory(iothub_client_retry_control_ut)
+add_unittest_directory(message_queue_ut)
 
 add_e2etest_directory(iothubclient_uploadtoblob_e2e)
 
