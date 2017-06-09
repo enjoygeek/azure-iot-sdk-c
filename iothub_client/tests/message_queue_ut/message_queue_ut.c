@@ -63,15 +63,16 @@ static void on_umock_c_error(UMOCK_C_ERROR_CODE error_code)
 #define TEST_OPTIONHANDLER_HANDLE           (OPTIONHANDLER_HANDLE)0x7771
 #define TEST_PROCESS_MESSAGE_CONTEXT        (void*)0x7772
 #define TEST_PROCESS_COMPLETE_CONTEXT       (void*)0x7773
+#define TEST_USER_CONTEXT                   (void*)0x7773
 #define USE_DEFAULT_CONFIG                  NULL
-#define TEST_BASE_MESSAGE_HANDLE            (MESSAGE_HANDLE)0x10000
-#define TEST_SOME_OTHER_MESSAGE             (MESSAGE_HANDLE)0x7777
-#define TEST_MESSAGE_HANDLE_2               (MESSAGE_HANDLE)0x7778
+#define TEST_SOME_OTHER_MESSAGE             (MQ_MESSAGE_HANDLE)0x7777
+#define TEST_MQ_MESSAGE_HANDLE_2            (MQ_MESSAGE_HANDLE)0x7778
 #define TEST_LIST_ITEM_HANDLE               (LIST_ITEM_HANDLE)0x7779
 #define TEST_LIST_ITEM_VALUE                (void*)0x7780
 #define TEST_REASON                         (void*)0x7781
 
 
+static MQ_MESSAGE_HANDLE TEST_BASE_MQ_MESSAGE_HANDLE[10];
 static time_t TEST_current_time;
 
 
@@ -162,17 +163,19 @@ static time_t add_seconds(time_t base_time, int seconds)
     return new_time;
 }
 
-static MESSAGE_HANDLE TEST_on_process_message_callback_message;
-static MESSAGE_PROCESSING_COMPLETED_CALLBACK TEST_on_process_message_callback_on_processing_completed_callback;
+static MESSAGE_QUEUE_HANDLE TEST_on_process_message_callback_message_queue;
+static MQ_MESSAGE_HANDLE TEST_on_process_message_callback_message;
+static PROCESS_MESSAGE_COMPLETED_CALLBACK TEST_on_process_message_callback_on_process_message_completed_callback;
 static void* TEST_on_process_message_callback_context;
-static void TEST_on_process_message_callback(MESSAGE_HANDLE message, MESSAGE_PROCESSING_COMPLETED_CALLBACK on_processing_completed_callback, void* context)
+static void TEST_on_process_message_callback(MESSAGE_QUEUE_HANDLE message_queue, MQ_MESSAGE_HANDLE message, PROCESS_MESSAGE_COMPLETED_CALLBACK on_process_message_completed_callback, void* user_context)
 {
-    TEST_on_process_message_callback_message = message;
-    TEST_on_process_message_callback_on_processing_completed_callback = on_processing_completed_callback;
-    TEST_on_process_message_callback_context = context;
+	TEST_on_process_message_callback_message_queue = message_queue;
+	TEST_on_process_message_callback_message = message;
+    TEST_on_process_message_callback_on_process_message_completed_callback = on_process_message_completed_callback;
+    TEST_on_process_message_callback_context = user_context;
 }
 
-static MESSAGE_HANDLE TEST_on_message_processing_completed_callback_message;
+static MQ_MESSAGE_HANDLE TEST_on_message_processing_completed_callback_message;
 static MESSAGE_QUEUE_RESULT TEST_on_message_processing_completed_callback_result;
 static void* TEST_on_message_processing_completed_callback_reason;
 static void* TEST_on_message_processing_completed_callback_context;
@@ -180,7 +183,7 @@ static size_t TEST_on_message_processing_completed_callback_SUCCESS_result_count
 static size_t TEST_on_message_processing_completed_callback_CANCELLED_result_count;
 static size_t TEST_on_message_processing_completed_callback_ERROR_result_count;
 static size_t TEST_on_message_processing_completed_callback_TIMEOUT_result_count;
-static void TEST_on_message_processing_completed_callback(MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, void* reason, void* context)
+static void TEST_on_message_processing_completed_callback(MQ_MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, void* reason, void* context)
 {
     TEST_on_message_processing_completed_callback_message = message;
     TEST_on_message_processing_completed_callback_result = result;
@@ -211,10 +214,7 @@ static MESSAGE_QUEUE_CONFIG* get_message_queue_config()
     g_config.max_message_enqueued_time_secs = 0;
     g_config.max_message_processing_time_secs = 0;
     g_config.max_retry_count = 0;
-    g_config.on_message_processing_completed_callback = TEST_on_message_processing_completed_callback;
-    g_config.on_message_processing_completed_context = TEST_PROCESS_COMPLETE_CONTEXT;
     g_config.on_process_message_callback = TEST_on_process_message_callback;
-    g_config.on_process_message_context = TEST_PROCESS_MESSAGE_CONTEXT;
 
     return &g_config;
 }
@@ -313,7 +313,7 @@ static void add_messages(MESSAGE_QUEUE_HANDLE mq, size_t number_of_messages, tim
 	{
 		umock_c_reset_all_calls();
 		set_message_queue_add_expected_calls(current_time);
-		int result = message_queue_add(mq, (MESSAGE_HANDLE)((unsigned int)TEST_BASE_MESSAGE_HANDLE + i));
+		int result = message_queue_add(mq, TEST_BASE_MQ_MESSAGE_HANDLE[i], TEST_on_message_processing_completed_callback, TEST_USER_CONTEXT);
 		ASSERT_ARE_EQUAL_WITH_MSG(int, 0, result, "failed adding message to queue");
 	}
 }
@@ -483,7 +483,7 @@ static void initialize_variables()
     TEST_OptionHandler_AddOption_result = OPTIONHANDLER_OK;
 
     TEST_on_process_message_callback_message = NULL;
-    TEST_on_process_message_callback_on_processing_completed_callback = NULL;
+    TEST_on_process_message_callback_on_process_message_completed_callback = NULL;
     TEST_on_process_message_callback_context = NULL;
 
     TEST_on_message_processing_completed_callback_message = NULL;
@@ -503,6 +503,17 @@ static void initialize_variables()
 	TEST_test_message_expiration_profile.expired_pending_messages_size = 0;
 	TEST_test_message_expiration_profile.max_message_enqueued_time_secs = 0;
 	TEST_test_message_expiration_profile.max_message_processing_time_secs = 0;
+	
+	TEST_BASE_MQ_MESSAGE_HANDLE[0] = (MQ_MESSAGE_HANDLE)0x4000;
+	TEST_BASE_MQ_MESSAGE_HANDLE[1] = (MQ_MESSAGE_HANDLE)0x4001;
+	TEST_BASE_MQ_MESSAGE_HANDLE[2] = (MQ_MESSAGE_HANDLE)0x4002;
+	TEST_BASE_MQ_MESSAGE_HANDLE[3] = (MQ_MESSAGE_HANDLE)0x4003;
+	TEST_BASE_MQ_MESSAGE_HANDLE[4] = (MQ_MESSAGE_HANDLE)0x4004;
+	TEST_BASE_MQ_MESSAGE_HANDLE[5] = (MQ_MESSAGE_HANDLE)0x4005;
+	TEST_BASE_MQ_MESSAGE_HANDLE[6] = (MQ_MESSAGE_HANDLE)0x4006;
+	TEST_BASE_MQ_MESSAGE_HANDLE[7] = (MQ_MESSAGE_HANDLE)0x4007;
+	TEST_BASE_MQ_MESSAGE_HANDLE[8] = (MQ_MESSAGE_HANDLE)0x4008;
+	TEST_BASE_MQ_MESSAGE_HANDLE[9] = (MQ_MESSAGE_HANDLE)0x4009;
 }
 
 static void register_umock_alias_types() 
@@ -515,7 +526,7 @@ static void register_umock_alias_types()
     REGISTER_UMOCK_ALIAS_TYPE(pfSetOption, void*);
 	REGISTER_UMOCK_ALIAS_TYPE(SINGLYLINKEDLIST_HANDLE, void*);
 	REGISTER_UMOCK_ALIAS_TYPE(LIST_ITEM_HANDLE, void*);
-	REGISTER_UMOCK_ALIAS_TYPE(MESSAGE_HANDLE, void*);
+	REGISTER_UMOCK_ALIAS_TYPE(MQ_MESSAGE_HANDLE, void*);
 }
 
 static void register_global_mock_hooks()
@@ -633,44 +644,6 @@ TEST_FUNCTION(create_NULL_on_process_message_callback)
 	// arrange
 	MESSAGE_QUEUE_CONFIG* config = get_message_queue_config();
 	config->on_process_message_callback = NULL;
-
-	umock_c_reset_all_calls();
-
-	// act
-	MESSAGE_QUEUE_HANDLE mq = message_queue_create(config);
-
-	// assert
-	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
-	ASSERT_IS_NULL(mq);
-
-	// cleanup
-}
-
-// Tests_SRS_MESSAGE_QUEUE_09_003: [If `config->max_message_enqueued_time_secs` or `config->max_message_processing_time_secs` is less than zero, message_queue_create shall fail and return NULL]
-TEST_FUNCTION(create_INVALID_max_message_enqueued_time_secs)
-{
-	// arrange
-	MESSAGE_QUEUE_CONFIG* config = get_message_queue_config();
-	config->max_message_enqueued_time_secs = -1;
-
-	umock_c_reset_all_calls();
-
-	// act
-	MESSAGE_QUEUE_HANDLE mq = message_queue_create(config);
-
-	// assert
-	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
-	ASSERT_IS_NULL(mq);
-
-	// cleanup
-}
-
-// Tests_SRS_MESSAGE_QUEUE_09_003: [If `config->max_message_enqueued_time_secs` or `config->max_message_processing_time_secs` is less than zero, message_queue_create shall fail and return NULL]
-TEST_FUNCTION(create_INVALID_max_message_processing_time_secs)
-{
-	// arrange
-	MESSAGE_QUEUE_CONFIG* config = get_message_queue_config();
-	config->max_message_processing_time_secs = -1;
 
 	umock_c_reset_all_calls();
 
@@ -830,7 +803,7 @@ TEST_FUNCTION(add_NULL_mq_handle)
 	umock_c_reset_all_calls();
 
 	// act
-	int result = message_queue_add(NULL, TEST_BASE_MESSAGE_HANDLE);
+	int result = message_queue_add(NULL, TEST_BASE_MQ_MESSAGE_HANDLE[0], TEST_on_message_processing_completed_callback, TEST_USER_CONTEXT);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
@@ -848,7 +821,7 @@ TEST_FUNCTION(add_NULL_message_handle)
 	umock_c_reset_all_calls();
 
 	// act
-	int result = message_queue_add(mq, NULL);
+	int result = message_queue_add(mq, NULL, TEST_on_message_processing_completed_callback, TEST_USER_CONTEXT);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
@@ -872,7 +845,7 @@ TEST_FUNCTION(add_success)
 	set_message_queue_add_expected_calls(TEST_current_time);
 
 	// act
-	int result = message_queue_add(mq, TEST_BASE_MESSAGE_HANDLE);
+	int result = message_queue_add(mq, TEST_BASE_MQ_MESSAGE_HANDLE[0], TEST_on_message_processing_completed_callback, TEST_USER_CONTEXT);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
@@ -907,7 +880,7 @@ TEST_FUNCTION(add_failure_checks)
 		umock_c_negative_tests_fail_call(i);
 
 		// act
-		int result = message_queue_add(mq, TEST_BASE_MESSAGE_HANDLE);
+		int result = message_queue_add(mq, TEST_BASE_MQ_MESSAGE_HANDLE[0], TEST_on_message_processing_completed_callback, TEST_USER_CONTEXT);
 
 		// assert
 		ASSERT_ARE_NOT_EQUAL_WITH_MSG(int, 0, result, error_msg);
@@ -1073,7 +1046,7 @@ TEST_FUNCTION(do_work_NULL_handle)
 
 // Tests_SRS_MESSAGE_QUEUE_09_039: [Each `mq_item` in `message_queue->pending` shall be moved to `message_queue->in_progress`]
 // Tests_SRS_MESSAGE_QUEUE_09_040: [`mq_item->processing_start_time` shall be set using get_time()]
-// Tests_SRS_MESSAGE_QUEUE_09_043: [If no failures occur, `message_queue->on_process_message_callback` shall be invoked passing `mq_item->message` and `on_message_processing_completed_callback`]
+// Tests_SRS_MESSAGE_QUEUE_09_043: [If no failures occur, `message_queue->on_process_message_callback` shall be invoked passing `mq_item->message` and `on_process_message_completed_callback`]
 TEST_FUNCTION(do_work_NO_EXPIRATION_success)
 {
 	// arrange
@@ -1089,8 +1062,8 @@ TEST_FUNCTION(do_work_NO_EXPIRATION_success)
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
-	ASSERT_ARE_EQUAL(void_ptr, (void_ptr)TEST_BASE_MESSAGE_HANDLE, (void_ptr)TEST_on_process_message_callback_message);
-	ASSERT_IS_NOT_NULL(TEST_on_process_message_callback_on_processing_completed_callback);
+	ASSERT_ARE_EQUAL(void_ptr, (void_ptr)TEST_BASE_MQ_MESSAGE_HANDLE[0], (void_ptr)TEST_on_process_message_callback_message);
+	ASSERT_IS_NOT_NULL(TEST_on_process_message_callback_on_process_message_completed_callback);
 	ASSERT_IS_NOT_NULL(TEST_on_process_message_callback_context);
 
 	// cleanup
@@ -1098,7 +1071,7 @@ TEST_FUNCTION(do_work_NO_EXPIRATION_success)
 }
 
 // Tests_SRS_MESSAGE_QUEUE_09_041: [If get_time() fails, `mq_item` shall be removed from `message_queue->in_progress`]
-// Tests_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `message_queue->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
+// Tests_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `mq_item->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
 TEST_FUNCTION(do_work_NO_EXPIRATION_failure_checks)
 {
 	// arrange
@@ -1200,32 +1173,13 @@ TEST_FUNCTION(message_queue_set_max_message_processing_time_secs_NULL_handle)
 	umock_c_reset_all_calls();
 
 	// act
-	int result = message_queue_set_max_message_processing_time_secs(NULL, 60.0);
+	int result = message_queue_set_max_message_processing_time_secs(NULL, 60);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
 	ASSERT_ARE_NOT_EQUAL(int, 0, result);
 
 	// cleanup
-}
-
-// Tests_SRS_MESSAGE_QUEUE_09_056: [If `seconds` is less than zero, message_queue_set_max_message_processing_time_secs shall fail and return non-zero]
-TEST_FUNCTION(message_queue_set_max_message_processing_time_secs_INVALID_seconds)
-{
-	// arrange
-	MESSAGE_QUEUE_HANDLE mq = create_message_queue(USE_DEFAULT_CONFIG);
-
-	umock_c_reset_all_calls();
-
-	// act
-	int result = message_queue_set_max_message_processing_time_secs(mq, -1.0);
-
-	// assert
-	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
-	ASSERT_ARE_NOT_EQUAL(int, 0, result);
-
-	// cleanup
-	message_queue_destroy(mq);
 }
 
 // Tests_SRS_MESSAGE_QUEUE_09_057: [`seconds` shall be saved into `message_queue->max_message_processing_time_secs`]
@@ -1238,7 +1192,7 @@ TEST_FUNCTION(message_queue_set_max_message_processing_time_secs_success)
 	umock_c_reset_all_calls();
 
 	// act
-	int result = message_queue_set_max_message_processing_time_secs(mq, 60.0);
+	int result = message_queue_set_max_message_processing_time_secs(mq, 60);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
@@ -1255,32 +1209,13 @@ TEST_FUNCTION(message_queue_set_max_message_enqueued_time_secs_NULL_handle)
 	umock_c_reset_all_calls();
 
 	// act
-	int result = message_queue_set_max_message_enqueued_time_secs(NULL, 60.0);
+	int result = message_queue_set_max_message_enqueued_time_secs(NULL, 60);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
 	ASSERT_ARE_NOT_EQUAL(int, 0, result);
 
 	// cleanup
-}
-
-// Tests_SRS_MESSAGE_QUEUE_09_052: [If `seconds` is less than zero, message_queue_set_max_message_enqueued_time_secs shall fail and return non-zero]
-TEST_FUNCTION(message_queue_set_max_message_enqueued_time_secs_INVALID_seconds)
-{
-	// arrange
-	MESSAGE_QUEUE_HANDLE mq = create_message_queue(USE_DEFAULT_CONFIG);
-
-	umock_c_reset_all_calls();
-
-	// act
-	int result = message_queue_set_max_message_enqueued_time_secs(mq, -1.0);
-
-	// assert
-	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
-	ASSERT_ARE_NOT_EQUAL(int, 0, result);
-
-	// cleanup
-	message_queue_destroy(mq);
 }
 
 // Tests_SRS_MESSAGE_QUEUE_09_053: [`seconds` shall be saved into `message_queue->max_message_enqueued_time_secs`]
@@ -1293,7 +1228,7 @@ TEST_FUNCTION(message_queue_set_max_message_enqueued_time_secs_success)
 	umock_c_reset_all_calls();
 
 	// act
-	int result = message_queue_set_max_message_enqueued_time_secs(mq, 60.0);
+	int result = message_queue_set_max_message_enqueued_time_secs(mq, 60);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
@@ -1379,7 +1314,7 @@ TEST_FUNCTION(message_queue_retrieve_options_failure_checks)
 	message_queue_destroy(mq);
 }
 
-// Tests_SRS_MESSAGE_QUEUE_09_069: [If `message` or `context` are NULL, on_message_processing_completed_callback shall return immediately]
+// Tests_SRS_MESSAGE_QUEUE_09_069: [If `message` or `message_queue` are NULL, on_process_message_completed_callback shall return immediately]
 TEST_FUNCTION(on_message_processing_completed_callback_NULL_message)
 {
 	// arrange
@@ -1391,8 +1326,7 @@ TEST_FUNCTION(on_message_processing_completed_callback_NULL_message)
 	umock_c_reset_all_calls();
 
 	// act
-	TEST_on_process_message_callback_on_processing_completed_callback(
-		NULL, MESSAGE_QUEUE_SUCCESS, TEST_REASON, TEST_on_process_message_callback_context);
+	TEST_on_process_message_callback_on_process_message_completed_callback(mq, NULL, MESSAGE_QUEUE_SUCCESS, TEST_REASON);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
@@ -1406,8 +1340,8 @@ TEST_FUNCTION(on_message_processing_completed_callback_NULL_message)
 	message_queue_destroy(mq);
 }
 
-// Tests_SRS_MESSAGE_QUEUE_09_069: [If `message` or `context` are NULL, on_message_processing_completed_callback shall return immediately]
-TEST_FUNCTION(on_message_processing_completed_callback_NULL_context)
+// Tests_SRS_MESSAGE_QUEUE_09_069: [If `message` or `message_queue` are NULL, on_process_message_completed_callback shall return immediately]
+TEST_FUNCTION(on_message_processing_completed_callback_NULL_message_queue)
 {
 	// arrange
 	MESSAGE_QUEUE_HANDLE mq = create_message_queue(USE_DEFAULT_CONFIG);
@@ -1418,8 +1352,7 @@ TEST_FUNCTION(on_message_processing_completed_callback_NULL_context)
 	umock_c_reset_all_calls();
 
 	// act
-	TEST_on_process_message_callback_on_processing_completed_callback(
-		TEST_on_process_message_callback_message, MESSAGE_QUEUE_SUCCESS, TEST_REASON, NULL);
+	TEST_on_process_message_callback_on_process_message_completed_callback(NULL, TEST_on_process_message_callback_message, MESSAGE_QUEUE_SUCCESS, TEST_REASON);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
@@ -1446,8 +1379,7 @@ TEST_FUNCTION(on_message_processing_completed_callback_MESSAGE_not_present)
 	set_on_message_processing_completed_callback_expected_calls(-1, false);
 
 	// act
-	TEST_on_process_message_callback_on_processing_completed_callback(
-		TEST_SOME_OTHER_MESSAGE, MESSAGE_QUEUE_SUCCESS, TEST_REASON, mq);
+	TEST_on_process_message_callback_on_process_message_completed_callback(mq, TEST_SOME_OTHER_MESSAGE, MESSAGE_QUEUE_SUCCESS, TEST_REASON);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
@@ -1462,7 +1394,7 @@ TEST_FUNCTION(on_message_processing_completed_callback_MESSAGE_not_present)
 }
 
 // Tests_SRS_MESSAGE_QUEUE_09_045: [If `message` is present in `message_queue->in_progress`, it shall be removed]
-// Tests_SRS_MESSAGE_QUEUE_09_049: [Otherwise `message_queue->on_message_processing_completed_callback` shall be invoked passing `mq_item->message`, `result`, `reason` and `message_queue->on_message_processing_completed_context`]
+// Tests_SRS_MESSAGE_QUEUE_09_049: [Otherwise `mq_item->on_message_processing_completed_callback` shall be invoked passing `mq_item->message`, `result`, `reason` and `mq_item->user_context`]
 // Tests_SRS_MESSAGE_QUEUE_09_050: [The `mq_item` related to `message` shall be freed]
 TEST_FUNCTION(on_message_processing_completed_callback_success)
 {
@@ -1471,16 +1403,15 @@ TEST_FUNCTION(on_message_processing_completed_callback_success)
 
 	add_messages(mq, 1, TEST_current_time);
 	crank_message_queue(mq, TEST_current_time, 1, 0, NULL);
-	ASSERT_ARE_EQUAL(void_ptr, (void*)TEST_BASE_MESSAGE_HANDLE, (void*)TEST_on_process_message_callback_message);
-	ASSERT_IS_NOT_NULL(TEST_on_process_message_callback_on_processing_completed_callback);
-	ASSERT_ARE_EQUAL(void_ptr, (void*)mq, (void*)TEST_on_process_message_callback_context);
+	ASSERT_ARE_EQUAL(void_ptr, (void*)TEST_BASE_MQ_MESSAGE_HANDLE[0], (void*)TEST_on_process_message_callback_message);
+	ASSERT_IS_NOT_NULL(TEST_on_process_message_callback_on_process_message_completed_callback);
+	ASSERT_ARE_EQUAL(void_ptr, (void*)TEST_USER_CONTEXT, (void*)TEST_on_process_message_callback_context);
 
 	umock_c_reset_all_calls();
 	set_on_message_processing_completed_callback_expected_calls(0, false);
 
 	// act
-	TEST_on_process_message_callback_on_processing_completed_callback(
-		TEST_on_process_message_callback_message, MESSAGE_QUEUE_SUCCESS, TEST_REASON, TEST_on_process_message_callback_context);
+	TEST_on_process_message_callback_on_process_message_completed_callback(mq, TEST_on_process_message_callback_message, MESSAGE_QUEUE_SUCCESS, TEST_REASON);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());
@@ -1514,14 +1445,14 @@ TEST_FUNCTION(on_message_processing_completed_callback_RETRYABLE_ERROR)
 	set_on_message_processing_completed_callback_expected_calls(0, false);
 
 	// act
-	TEST_on_process_message_callback_on_processing_completed_callback(
-		TEST_on_process_message_callback_message, MESSAGE_QUEUE_RETRYABLE_ERROR, NULL, TEST_on_process_message_callback_context);
+	TEST_on_process_message_callback_on_process_message_completed_callback(mq, 
+		TEST_on_process_message_callback_message, MESSAGE_QUEUE_RETRYABLE_ERROR, NULL);
 	message_queue_do_work(mq);
-	TEST_on_process_message_callback_on_processing_completed_callback(
-		TEST_on_process_message_callback_message, MESSAGE_QUEUE_RETRYABLE_ERROR, NULL, TEST_on_process_message_callback_context);
+	TEST_on_process_message_callback_on_process_message_completed_callback(mq,
+		TEST_on_process_message_callback_message, MESSAGE_QUEUE_RETRYABLE_ERROR, NULL);
 	message_queue_do_work(mq);
-	TEST_on_process_message_callback_on_processing_completed_callback(
-		TEST_on_process_message_callback_message, MESSAGE_QUEUE_RETRYABLE_ERROR, NULL, TEST_on_process_message_callback_context);
+	TEST_on_process_message_callback_on_process_message_completed_callback(mq, 
+		TEST_on_process_message_callback_message, MESSAGE_QUEUE_RETRYABLE_ERROR, NULL);
 
 	// assert
 	ASSERT_ARE_EQUAL(char_ptr, umock_c_get_expected_calls(), umock_c_get_actual_calls());

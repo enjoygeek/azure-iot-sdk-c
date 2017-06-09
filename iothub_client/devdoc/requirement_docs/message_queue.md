@@ -14,8 +14,9 @@ azure_c_shared_utility
 ## Exposed API
 
 ```c
-typedef MESSAGE_QUEUE* MESSAGE_QUEUE_HANDLE;
-typedef void* MESSAGE_HANDLE;
+typedef struct MESSAGE_QUEUE_TAG* MESSAGE_QUEUE_HANDLE;
+typedef void* MQ_MESSAGE_HANDLE;
+typedef void* USER_DEFINED_REASON;
 
 #define MESSAGE_QUEUE_RESULT_STRINGS  \
     MESSAGE_QUEUE_SUCCESS,            \
@@ -26,29 +27,26 @@ typedef void* MESSAGE_HANDLE;
 
 DEFINE_ENUM(MESSAGE_QUEUE_RESULT, MESSAGE_QUEUE_RESULT_STRINGS);
 
-typedef void(*MESSAGE_PROCESSING_COMPLETED_CALLBACK)(MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, void* reason, void* context);
-typedef void(*PROCESS_MESSAGE_CALLBACK)(MESSAGE_HANDLE message, MESSAGE_PROCESSING_COMPLETED_CALLBACK on_processing_completed_callback, void* context);
+typedef void(*MESSAGE_PROCESSING_COMPLETED_CALLBACK)(MQ_MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, USER_DEFINED_REASON reason, void* user_context);
+typedef void(*PROCESS_MESSAGE_COMPLETED_CALLBACK)(MESSAGE_QUEUE_HANDLE message_queue, MQ_MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, USER_DEFINED_REASON reason);
+typedef void(*PROCESS_MESSAGE_CALLBACK)(MESSAGE_QUEUE_HANDLE message_queue, MQ_MESSAGE_HANDLE message, PROCESS_MESSAGE_COMPLETED_CALLBACK on_process_message_completed_callback, void* user_context);
 
 typedef struct MESSAGE_QUEUE_CONFIG_TAG
 {
-	size_t message_processing_timeout_secs;
 	PROCESS_MESSAGE_CALLBACK on_process_message_callback;
-	void* on_process_message_context;
-	MESSAGE_PROCESSING_COMPLETED_CALLBACK on_message_processing_completed_callback;
-	void* on_message_processing_completed_context;
-	double max_message_enqueued_time_secs;
-	double max_message_processing_time_secs;
-	unsigned int max_retry_count;
+	size_t max_message_enqueued_time_secs;
+	size_t max_message_processing_time_secs;
+	size_t max_retry_count;
 } MESSAGE_QUEUE_CONFIG;
 
 extern MESSAGE_QUEUE_HANDLE message_queue_create(MESSAGE_QUEUE_CONFIG* config);
 extern void message_queue_destroy(MESSAGE_QUEUE_HANDLE message_queue);
-extern int message_queue_add(MESSAGE_QUEUE_HANDLE message_queue, MESSAGE_HANDLE message);
+extern int message_queue_add(MESSAGE_QUEUE_HANDLE message_queue, MQ_MESSAGE_HANDLE message, MESSAGE_PROCESSING_COMPLETED_CALLBACK on_message_processing_completed_callback, void* user_context)
 extern void message_queue_remove_all(MESSAGE_QUEUE_HANDLE message_queue);
 extern int message_queue_is_empty(MESSAGE_QUEUE_HANDLE message_queue, bool* is_empty);
 extern void message_queue_do_work(MESSAGE_QUEUE_HANDLE message_queue);
-extern int message_queue_set_max_message_enqueued_time_secs(MESSAGE_QUEUE_HANDLE message_queue, double seconds);
-extern int message_queue_set_max_message_processing_time_secs(MESSAGE_QUEUE_HANDLE message_queue, double seconds);
+extern int message_queue_set_max_message_enqueued_time_secs(MESSAGE_QUEUE_HANDLE message_queue, size_t seconds);
+extern int message_queue_set_max_message_processing_time_secs(MESSAGE_QUEUE_HANDLE message_queue, size_t seconds);
 extern OPTIONHANDLER_HANDLE message_queue_retrieve_options(MESSAGE_QUEUE_HANDLE message_queue);
 ```
 
@@ -59,7 +57,6 @@ MESSAGE_QUEUE_HANDLE message_queue_create(MESSAGE_QUEUE_CONFIG* config);
 
 **SRS_MESSAGE_QUEUE_09_001: [**If `config` is NULL, message_queue_create shall fail and return NULL**]**
 **SRS_MESSAGE_QUEUE_09_002: [**If `config->on_process_message_callback` is NULL, message_queue_create shall fail and return NULL**]**
-**SRS_MESSAGE_QUEUE_09_003: [**If `config->max_message_enqueued_time_secs` or `config->max_message_processing_time_secs` is less than zero, message_queue_create shall fail and return NULL**]**
 **SRS_MESSAGE_QUEUE_09_004: [**Memory shall be allocated for the MESSAGE_QUEUE data structure (aka `message_queue`)**]**
 **SRS_MESSAGE_QUEUE_09_005: [**If `instance` cannot be allocated, message_queue_create shall fail and return NULL**]**
 **SRS_MESSAGE_QUEUE_09_006: [**`message_queue->pending` shall be set using singlylinkedlist_create()**]**
@@ -139,21 +136,21 @@ void message_queue_do_work(MESSAGE_QUEUE_HANDLE message_queue);
 **SRS_MESSAGE_QUEUE_09_039: [**Each `mq_item` in `message_queue->pending` shall be moved to `message_queue->in_progress`**]**
 **SRS_MESSAGE_QUEUE_09_040: [**`mq_item->processing_start_time` shall be set using get_time()**]**
 **SRS_MESSAGE_QUEUE_09_041: [**If get_time() fails, `mq_item` shall be removed from `message_queue->in_progress`**]**
-**SRS_MESSAGE_QUEUE_09_042: [**If any failures occur, `message_queue->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed**]**
-**SRS_MESSAGE_QUEUE_09_043: [**If no failures occur, `message_queue->on_process_message_callback` shall be invoked passing `mq_item->message` and `on_message_processing_completed_callback`**]**
+**SRS_MESSAGE_QUEUE_09_042: [**If any failures occur, `mq_item->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed**]**
+**SRS_MESSAGE_QUEUE_09_043: [**If no failures occur, `message_queue->on_process_message_callback` shall be invoked passing `mq_item->message` and `on_process_message_completed_callback`**]**
 
-#### on_message_processing_completed_callback
+#### on_process_message_completed_callback
 ```c
-static void on_message_processing_completed_callback(MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, void* reason, void* context);
+static void on_process_message_completed_callback(MESSAGE_QUEUE_HANDLE message_queue, MQ_MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, USER_DEFINED_REASON reason)
 ```
 
-**SRS_MESSAGE_QUEUE_09_069: [**If `message` or `context` are NULL, on_message_processing_completed_callback shall return immediately**]**
+**SRS_MESSAGE_QUEUE_09_069: [**If `message` or `message_queue` are NULL, on_process_message_completed_callback shall return immediately**]**
 **SRS_MESSAGE_QUEUE_09_044: [**If `message` is not present in `message_queue->in_progress`, it shall be ignored**]**
 **SRS_MESSAGE_QUEUE_09_045: [**If `message` is present in `message_queue->in_progress`, it shall be removed**]**
 **SRS_MESSAGE_QUEUE_09_046: [**If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` shall be incremented by 1**]**
 **SRS_MESSAGE_QUEUE_09_047: [**If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is less than or equal `message_queue->max_retry_count`, the `message` shall be moved to `message_queue->pending` to be re-sent**]**
 **SRS_MESSAGE_QUEUE_09_048: [**If `result` is MESSAGE_QUEUE_RETRYABLE_ERROR and `mq_item->number_of_attempts` is greater than `message_queue->max_retry_count`, result shall be changed to MESSAGE_QUEUE_ERROR**]**
-**SRS_MESSAGE_QUEUE_09_049: [**Otherwise `message_queue->on_message_processing_completed_callback` shall be invoked passing `mq_item->message`, `result`, `reason` and `message_queue->on_message_processing_completed_context`**]**
+**SRS_MESSAGE_QUEUE_09_049: [**Otherwise `mq_item->on_message_processing_completed_callback` shall be invoked passing `mq_item->message`, `result`, `reason` and `mq_item->user_context`**]**
 **SRS_MESSAGE_QUEUE_09_050: [**The `mq_item` related to `message` shall be freed**]**
 
 
@@ -163,7 +160,6 @@ int message_queue_set_max_message_enqueued_time_secs(MESSAGE_QUEUE_HANDLE messag
 ```
 
 **SRS_MESSAGE_QUEUE_09_051: [**If `message_queue` is NULL, message_queue_set_max_message_enqueued_time_secs shall fail and return non-zero**]**
-**SRS_MESSAGE_QUEUE_09_052: [**If `seconds` is less than zero, message_queue_set_max_message_enqueued_time_secs shall fail and return non-zero**]**
 **SRS_MESSAGE_QUEUE_09_053: [**`seconds` shall be saved into `message_queue->max_message_enqueued_time_secs`**]**
 **SRS_MESSAGE_QUEUE_09_054: [**If no failures occur, message_queue_set_max_message_enqueued_time_secs shall return 0**]**
 
@@ -174,7 +170,6 @@ int message_queue_set_max_message_processing_time_secs(MESSAGE_QUEUE_HANDLE mess
 ```
 
 **SRS_MESSAGE_QUEUE_09_055: [**If `message_queue` is NULL, message_queue_set_max_message_processing_time_secs shall fail and return non-zero**]**
-**SRS_MESSAGE_QUEUE_09_056: [**If `seconds` is less than zero, message_queue_set_max_message_processing_time_secs shall fail and return non-zero**]**
 **SRS_MESSAGE_QUEUE_09_057: [**`seconds` shall be saved into `message_queue->max_message_processing_time_secs`**]**
 **SRS_MESSAGE_QUEUE_09_058: [**If no failures occur, message_queue_set_max_message_processing_time_secs shall return 0**]**
 

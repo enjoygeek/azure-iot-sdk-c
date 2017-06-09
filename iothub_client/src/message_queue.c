@@ -24,15 +24,12 @@ static const char* SAVED_OPTION_MAX_PROCESSING_TIME_SECS = "SAVED_OPTION_MAX_PRO
 
 struct MESSAGE_QUEUE_TAG
 {
-	double max_message_enqueued_time_secs;
-	double max_message_processing_time_secs;
-	unsigned int max_retry_count;
+	size_t max_message_enqueued_time_secs;
+	size_t max_message_processing_time_secs;
+	size_t max_retry_count;
 
 	PROCESS_MESSAGE_CALLBACK on_process_message_callback;
 	void* on_process_message_context;
-	
-	MESSAGE_PROCESSING_COMPLETED_CALLBACK on_message_processing_completed_callback;
-	void* on_message_processing_completed_context;
 
 	SINGLYLINKEDLIST_HANDLE pending;
 	SINGLYLINKEDLIST_HANDLE in_progress;
@@ -40,17 +37,19 @@ struct MESSAGE_QUEUE_TAG
 
 typedef struct MESSAGE_QUEUE_ITEM_TAG
 {
-	MESSAGE_HANDLE message;
+	MQ_MESSAGE_HANDLE message;
+	MESSAGE_PROCESSING_COMPLETED_CALLBACK on_message_processing_completed_callback;
+	void* user_context;
 	time_t enqueue_time;
 	time_t processing_start_time;
-	unsigned int number_of_attempts;
+	size_t number_of_attempts;
 } MESSAGE_QUEUE_ITEM;
 
 
 
 // ---------- Helper Functions ---------- //
 
-static bool dequeue_message_and_fire_callback(MESSAGE_QUEUE_HANDLE message_queue, SINGLYLINKEDLIST_HANDLE list, MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, void* reason)
+static bool dequeue_message_and_fire_callback(MESSAGE_QUEUE_HANDLE message_queue, SINGLYLINKEDLIST_HANDLE list, MQ_MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, void* reason)
 {
 
 	LIST_ITEM_HANDLE list_item = singlylinkedlist_get_head_item(list);
@@ -100,10 +99,10 @@ static bool dequeue_message_and_fire_callback(MESSAGE_QUEUE_HANDLE message_queue
 
 			if (!is_retrying)
 			{
-				// Codes_SRS_MESSAGE_QUEUE_09_049: [Otherwise `message_queue->on_message_processing_completed_callback` shall be invoked passing `mq_item->message`, `result`, `reason` and `message_queue->on_message_processing_completed_context`]
-				if (message_queue->on_message_processing_completed_callback != NULL)
+				// Codes_SRS_MESSAGE_QUEUE_09_049: [Otherwise `mq_item->on_message_processing_completed_callback` shall be invoked passing `mq_item->message`, `result`, `reason` and `mq_item->user_context`]
+				if (mq_item->on_message_processing_completed_callback != NULL)
 				{
-					message_queue->on_message_processing_completed_callback(mq_item->message, result, reason, message_queue->on_message_processing_completed_context);
+					mq_item->on_message_processing_completed_callback(mq_item->message, result, reason, mq_item->user_context);
 				}
 
 				// Codes_SRS_MESSAGE_QUEUE_09_050: [The `mq_item` related to `message` shall be freed]
@@ -120,18 +119,16 @@ static bool dequeue_message_and_fire_callback(MESSAGE_QUEUE_HANDLE message_queue
 }
 
 
-static void on_message_processing_completed_callback(MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, void* reason, void* context)
+static void on_process_message_completed_callback(MESSAGE_QUEUE_HANDLE message_queue, MQ_MESSAGE_HANDLE message, MESSAGE_QUEUE_RESULT result, USER_DEFINED_REASON reason)
 {
-	MESSAGE_QUEUE_HANDLE message_queue = (MESSAGE_QUEUE_HANDLE)context;
-
-	// Codes_SRS_MESSAGE_QUEUE_09_069: [If `message` or `context` are NULL, on_message_processing_completed_callback shall return immediately]
+	// Codes_SRS_MESSAGE_QUEUE_09_069: [If `message` or `message_queue` are NULL, on_message_processing_completed_callback shall return immediately]
 	if (message == NULL || message_queue == NULL)
 	{
-		LogError("on_message_processing_completed_callback invoked with NULL arguments (message=%p, message_queue=%p)", message, message_queue);
+		LogError("on_process_message_completed_callback invoked with NULL arguments (message=%p, message_queue=%p)", message, message_queue);
 	}
 	else if (!dequeue_message_and_fire_callback(message_queue, message_queue->in_progress, message, result, reason))
 	{
-		LogError("on_message_processing_completed_callback invoked for message not in in-progress list (%p)", message);
+		LogError("on_process_message_completed_callback invoked for message not in in-progress list (%p)", message);
 	}
 }
 
@@ -241,10 +238,10 @@ static void process_pending_messages(MESSAGE_QUEUE_HANDLE message_queue)
 		{
 			LogError("failed moving message out of pending list (%p)", mq_item->message);
 
-			// Codes_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `message_queue->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
-			if (message_queue->on_message_processing_completed_callback != NULL)
+			// Codes_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `mq_item->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
+			if (mq_item->on_message_processing_completed_callback != NULL)
 			{
-				message_queue->on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, message_queue->on_message_processing_completed_context);
+				mq_item->on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, mq_item->user_context);
 			}
 
 			// Not freeing since this would cause a memory A/V on the next call.
@@ -257,10 +254,10 @@ static void process_pending_messages(MESSAGE_QUEUE_HANDLE message_queue)
 			// Codes_SRS_MESSAGE_QUEUE_09_041: [If get_time() fails, `mq_item` shall be removed from `message_queue->in_progress`]
 			LogError("failed setting message processing_start_time (%p)", mq_item->message);
 
-			// Codes_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `message_queue->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
-			if (message_queue->on_message_processing_completed_callback != NULL)
+			// Codes_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `mq_item->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
+			if (mq_item->on_message_processing_completed_callback != NULL)
 			{
-				message_queue->on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, message_queue->on_message_processing_completed_context);
+				mq_item->on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, mq_item->user_context);
 			}
 
 			free(mq_item);
@@ -270,18 +267,18 @@ static void process_pending_messages(MESSAGE_QUEUE_HANDLE message_queue)
 		{
 			LogError("failed moving message to in-progress list (%p)", mq_item->message);
 
-			// Codes_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `message_queue->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
-			if (message_queue->on_message_processing_completed_callback != NULL)
+			// Codes_SRS_MESSAGE_QUEUE_09_042: [If any failures occur, `mq_item->on_message_processing_completed_callback` shall be invoked with MESSAGE_QUEUE_ERROR and `mq_item` freed]
+			if (mq_item->on_message_processing_completed_callback != NULL)
 			{
-				message_queue->on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, message_queue->on_message_processing_completed_context);
+				mq_item->on_message_processing_completed_callback(mq_item->message, MESSAGE_QUEUE_ERROR, NULL, mq_item->user_context);
 			}
 
 			free(mq_item);
 		}
 		else
 		{
-			// Codes_SRS_MESSAGE_QUEUE_09_043: [If no failures occur, `message_queue->on_process_message_callback` shall be invoked passing `mq_item->message` and `on_message_processing_completed_callback`]
-			message_queue->on_process_message_callback(mq_item->message, on_message_processing_completed_callback, (void*)message_queue);
+			// Codes_SRS_MESSAGE_QUEUE_09_043: [If no failures occur, `message_queue->on_process_message_callback` shall be invoked passing `mq_item->message` and `on_process_message_completed_callback`]
+			message_queue->on_process_message_callback(message_queue, mq_item->message, on_process_message_completed_callback, mq_item->user_context);
 		}
 	}
 }
@@ -295,26 +292,17 @@ static void* cloneOption(const char* name, const void* value)
 		LogError("invalid argument (name=%p, value=%p)", name, value);
 		result = NULL;
 	}
-	else if (strcmp(SAVED_OPTION_MAX_ENQUEUE_TIME_SECS, name) == 0 || strcmp(SAVED_OPTION_MAX_PROCESSING_TIME_SECS, name) == 0)
+	else if (strcmp(SAVED_OPTION_MAX_ENQUEUE_TIME_SECS, name) == 0 || 
+		strcmp(SAVED_OPTION_MAX_PROCESSING_TIME_SECS, name) == 0 || 
+		strcmp(SAVED_OPTION_MAX_RETRY_COUNT, name) == 0)
 	{
-		if ((result = malloc(sizeof(double))) == NULL)
+		if ((result = malloc(sizeof(size_t))) == NULL)
 		{
 			LogError("failed cloning option %s (malloc failed)", name);
 		}
 		else
 		{
-			memcpy(result, value, sizeof(double));
-		}
-	}
-	else if (strcmp(SAVED_OPTION_MAX_RETRY_COUNT, name) == 0)
-	{
-		if ((result = malloc(sizeof(unsigned int))) == NULL)
-		{
-			LogError("failed cloning option %s (malloc failed)", name);
-		}
-		else
-		{
-			memcpy(result, value, sizeof(unsigned int));
+			memcpy(result, value, sizeof(size_t));
 		}
 	}
 	else
@@ -415,12 +403,6 @@ MESSAGE_QUEUE_HANDLE message_queue_create(MESSAGE_QUEUE_CONFIG* config)
 		LogError("invalid configuration (on_process_message_callback is NULL)");
 		result = NULL;
 	}
-	// Codes_SRS_MESSAGE_QUEUE_09_003: [If `config->max_message_enqueued_time_secs` or `config->max_message_processing_time_secs` is less than zero, message_queue_create shall fail and return NULL]
-	else if (config->max_message_enqueued_time_secs < 0 || config->max_message_processing_time_secs < 0)
-	{
-		LogError("invalid configuration (max_message_enqueued_time_secs and max_message_processing_time_secs cannot be less than zero)");
-		result = NULL;
-	}
 	// Codes_SRS_MESSAGE_QUEUE_09_004: [Memory shall be allocated for the MESSAGE_QUEUE data structure (aka `message_queue`)]
 	else if ((result = (MESSAGE_QUEUE*)malloc(sizeof(MESSAGE_QUEUE))) == NULL)
 	{
@@ -459,20 +441,15 @@ MESSAGE_QUEUE_HANDLE message_queue_create(MESSAGE_QUEUE_CONFIG* config)
 			result->max_message_processing_time_secs = config->max_message_processing_time_secs;
 			result->max_retry_count = config->max_retry_count;
 			result->on_process_message_callback = config->on_process_message_callback;
-			result->on_process_message_context = config->on_process_message_context;
-			result->on_message_processing_completed_callback = config->on_message_processing_completed_callback;
-			result->on_message_processing_completed_context = config->on_message_processing_completed_context;
-
 		}
 	}
 
 	return result;
 }
 
-int message_queue_add(MESSAGE_QUEUE_HANDLE message_queue, MESSAGE_HANDLE message)
+int message_queue_add(MESSAGE_QUEUE_HANDLE message_queue, MQ_MESSAGE_HANDLE message, MESSAGE_PROCESSING_COMPLETED_CALLBACK on_message_processing_completed_callback, void* user_context)
 {
 	int result;
-
 
 	// Codes_SRS_MESSAGE_QUEUE_09_016: [If `message_queue` or `message` are NULL, message_queue_add shall fail and return non-zero]
 	if (message_queue == NULL || message == NULL)
@@ -517,6 +494,8 @@ int message_queue_add(MESSAGE_QUEUE_HANDLE message_queue, MESSAGE_HANDLE message
 			{
 				// Codes_SRS_MESSAGE_QUEUE_09_023: [`message` shall be saved into `mq_item->message`]
 				mq_item->message = message;
+				mq_item->on_message_processing_completed_callback = on_message_processing_completed_callback;
+				mq_item->user_context = user_context;
 				mq_item->processing_start_time = INDEFINITE_TIME;
 				// Codes_SRS_MESSAGE_QUEUE_09_025: [If no failures occur, message_queue_add shall return 0]
 				result = RESULT_OK;
@@ -559,15 +538,14 @@ void message_queue_do_work(MESSAGE_QUEUE_HANDLE message_queue)
 	}
 }
 
-int message_queue_set_max_message_enqueued_time_secs(MESSAGE_QUEUE_HANDLE message_queue, double seconds)
+int message_queue_set_max_message_enqueued_time_secs(MESSAGE_QUEUE_HANDLE message_queue, size_t seconds)
 {
 	int result;
 
 	// Codes_SRS_MESSAGE_QUEUE_09_051: [If `message_queue` is NULL, message_queue_set_max_message_enqueued_time_secs shall fail and return non-zero]
-	// Codes_SRS_MESSAGE_QUEUE_09_052: [If `seconds` is less than zero, message_queue_set_max_message_enqueued_time_secs shall fail and return non-zero]
-	if (message_queue == NULL || seconds < 0)
+	if (message_queue == NULL)
 	{
-		LogError("invalid argument (message_queue=%p, seconds=%d)", message_queue, seconds);
+		LogError("invalid argument (message_queue is NULL)");
 		result = __FAILURE__;
 	}
 	else
@@ -581,15 +559,14 @@ int message_queue_set_max_message_enqueued_time_secs(MESSAGE_QUEUE_HANDLE messag
 	return result;
 }
 
-int message_queue_set_max_message_processing_time_secs(MESSAGE_QUEUE_HANDLE message_queue, double seconds)
+int message_queue_set_max_message_processing_time_secs(MESSAGE_QUEUE_HANDLE message_queue, size_t seconds)
 {
 	int result;
 
 	// Codes_SRS_MESSAGE_QUEUE_09_055: [If `message_queue` is NULL, message_queue_set_max_message_processing_time_secs shall fail and return non-zero]
-	// Codes_SRS_MESSAGE_QUEUE_09_056: [If `seconds` is less than zero, message_queue_set_max_message_processing_time_secs shall fail and return non-zero]
-	if (message_queue == NULL || seconds < 0)
+	if (message_queue == NULL)
 	{
-		LogError("invalid argument (message_queue=%p, seconds=%d)", message_queue, seconds);
+		LogError("invalid argument (message_queue is NULL)");
 		result = __FAILURE__;
 	}
 	else
@@ -603,7 +580,7 @@ int message_queue_set_max_message_processing_time_secs(MESSAGE_QUEUE_HANDLE mess
 	return result;
 }
 
-int message_queue_set_max_retry_count(MESSAGE_QUEUE_HANDLE message_queue, unsigned int max_retry_count)
+int message_queue_set_max_retry_count(MESSAGE_QUEUE_HANDLE message_queue, size_t max_retry_count)
 {
 	int result;
 
@@ -635,7 +612,7 @@ static int setOption(void* handle, const char* name, const void* value)
 	}
 	else if (strcmp(SAVED_OPTION_MAX_ENQUEUE_TIME_SECS, name) == 0)
 	{
-		if (message_queue_set_max_message_enqueued_time_secs((MESSAGE_QUEUE_HANDLE)handle, *(double*)value) != RESULT_OK)
+		if (message_queue_set_max_message_enqueued_time_secs((MESSAGE_QUEUE_HANDLE)handle, *(size_t*)value) != RESULT_OK)
 		{
 			LogError("failed setting option %s", name);
 			result = __FAILURE__;
@@ -647,7 +624,7 @@ static int setOption(void* handle, const char* name, const void* value)
 	}
 	else if (strcmp(SAVED_OPTION_MAX_PROCESSING_TIME_SECS, name) == 0)
 	{
-		if (message_queue_set_max_message_processing_time_secs((MESSAGE_QUEUE_HANDLE)handle, *(double*)value) != RESULT_OK)
+		if (message_queue_set_max_message_processing_time_secs((MESSAGE_QUEUE_HANDLE)handle, *(size_t*)value) != RESULT_OK)
 		{
 			LogError("failed setting option %s", name);
 			result = __FAILURE__;
@@ -659,7 +636,7 @@ static int setOption(void* handle, const char* name, const void* value)
 	}
 	else if (strcmp(SAVED_OPTION_MAX_RETRY_COUNT, name) == 0)
 	{
-		if (message_queue_set_max_retry_count((MESSAGE_QUEUE_HANDLE)handle, *(unsigned int*)value) != RESULT_OK)
+		if (message_queue_set_max_retry_count((MESSAGE_QUEUE_HANDLE)handle, *(size_t*)value) != RESULT_OK)
 		{
 			LogError("failed setting option %s", name);
 			result = __FAILURE__;
