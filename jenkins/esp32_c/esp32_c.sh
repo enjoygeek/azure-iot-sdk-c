@@ -18,6 +18,7 @@ fi
 
 pwd
 #cd c-utility/jenkins/linux_esp32_c/test_build
+mkdir /home/jenkins/workspace/ESP32-build
 echo "building in" $(pwd)
 dir
 #make
