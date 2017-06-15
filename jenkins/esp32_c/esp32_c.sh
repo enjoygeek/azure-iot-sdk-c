@@ -21,6 +21,7 @@ pwd
 mkdir /home/jenkins/workspace/ESP32-build
 echo "building in" $(pwd)
 dir
+dir /home/jenkins/workspace
 #make
 if [ $? = 0 ]
     then echo "built okay"
