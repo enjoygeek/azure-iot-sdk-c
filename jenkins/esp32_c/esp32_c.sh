@@ -17,12 +17,12 @@ else
 fi
 
 pwd
-#cd c-utility/jenkins/linux_esp32_c/test_build
-mkdir /home/jenkins/workspace/ESP32-build
+cd jenkins/esp32_c/test_build
 echo "building in" $(pwd)
-dir
+echo "workspace dir result:"
 dir /home/jenkins/workspace
-#make
+echo "making now"
+make
 if [ $? = 0 ]
     then echo "built okay"
 else 
