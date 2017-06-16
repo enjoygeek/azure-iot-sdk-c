@@ -16,10 +16,8 @@ else
     exit 1
 fi
 
-pwd
-cd jenkins/esp32_c/test_build
+cd jenkins/esp32_c/build
 echo "building in" $(pwd)
-echo "making now"
 make
 if [ $? = 0 ]
     then echo "built okay"
