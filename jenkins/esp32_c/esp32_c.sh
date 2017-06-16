@@ -13,7 +13,7 @@ else
     echo "ESP32 SDK commit is " $idf_commit
     echo "ESP32 SDK commit should be " $tested_idf_commit
     echo "Error: ESP32 SDK commit is wrong"
-    exit 1
+    exit 1 
 fi
 
 cd jenkins/esp32_c/build
