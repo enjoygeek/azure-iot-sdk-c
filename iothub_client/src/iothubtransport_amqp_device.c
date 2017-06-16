@@ -2,7 +2,6 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 #include <stdlib.h>
-#include "iothubtransport_amqp_telemetry_messenger.h"
 #include "azure_c_shared_utility/optimize_size.h"
 #include "azure_c_shared_utility/gballoc.h"
 #include "azure_c_shared_utility/agenttime.h" 
@@ -10,6 +9,8 @@
 #include "azure_c_shared_utility/strings.h"
 #include "iothubtransport_amqp_cbs_auth.h"
 #include "iothubtransport_amqp_device.h"
+#include "iothubtransport_amqp_telemetry_messenger.h"
+#include "iothubtransport_amqp_twin_messenger.h"
 
 #define RESULT_OK                                  0
 #define INDEFINITE_TIME                            ((time_t)-1)
@@ -40,6 +41,12 @@ typedef struct DEVICE_INSTANCE_TAG
 
     ON_DEVICE_C2D_MESSAGE_RECEIVED on_message_received_callback;
     void* on_message_received_context;
+
+	TWIN_MESSENGER_HANDLE twin_messenger_handle;
+	TWIN_MESSENGER_STATE twin_msgr_state;
+	time_t twin_msgr_state_last_changed_time;
+	DEVICE_TWIN_UPDATE_RECEIVED_CALLBACK on_device_twin_update_received_callback;
+	void* on_device_twin_update_received_context;
 } DEVICE_INSTANCE;
 
 typedef struct DEVICE_SEND_EVENT_TASK_TAG
@@ -47,6 +54,12 @@ typedef struct DEVICE_SEND_EVENT_TASK_TAG
     ON_DEVICE_D2C_EVENT_SEND_COMPLETE on_event_send_complete_callback;
     void* on_event_send_complete_context;
 } DEVICE_SEND_EVENT_TASK;
+
+typedef struct DEVICE_SEND_TWIN_UPDATE_CONTEXT_TAG
+{
+	DEVICE_SEND_TWIN_UPDATE_COMPLETE_CALLBACK on_send_twin_update_complete_callback;
+	void* context;
+} DEVICE_SEND_TWIN_UPDATE_CONTEXT;
 
 // Internal state control
 static void update_state(DEVICE_INSTANCE* instance, DEVICE_STATE new_state)
@@ -99,7 +112,9 @@ static int is_timeout_reached(time_t start_time, size_t timeout_in_secs, int *is
     return result;
 }
 
-// Callback Handlers
+
+//---------- Callback Handlers ----------//
+
 static D2C_EVENT_SEND_RESULT get_d2c_event_send_result_from(TELEMETRY_MESSENGER_EVENT_SEND_COMPLETE_RESULT result)
 {
     D2C_EVENT_SEND_RESULT d2c_esr;
@@ -206,6 +221,87 @@ static void on_messenger_state_changed_callback(void* context, TELEMETRY_MESSENG
         }
     }
 }
+
+static DEVICE_TWIN_UPDATE_RESULT get_device_twin_update_result_from(TWIN_REPORT_STATE_RESULT result)
+{
+	DEVICE_TWIN_UPDATE_RESULT device_result;
+
+	switch (result)
+	{
+	case TWIN_REPORT_STATE_RESULT_OK:
+		device_result = DEVICE_TWIN_UPDATE_RESULT_OK;
+		break;
+	case TWIN_REPORT_STATE_RESULT_TIMEOUT:
+	case TWIN_REPORT_STATE_RESULT_ERROR:
+		device_result = DEVICE_TWIN_UPDATE_RESULT_ERROR;
+		break;
+	default:
+		device_result = DEVICE_TWIN_UPDATE_RESULT_ERROR;
+	};
+
+	return device_result;
+}
+
+static void on_report_state_complete_callback(TWIN_REPORT_STATE_RESULT result, int status_code, void* context)
+{
+	if (context == NULL)
+	{
+		LogError("Invalid argument (context is NULL)");
+	}
+	else
+	{
+		DEVICE_SEND_TWIN_UPDATE_CONTEXT* twin_ctx = (DEVICE_SEND_TWIN_UPDATE_CONTEXT*)context;
+		DEVICE_TWIN_UPDATE_RESULT device_result;
+
+		device_result = get_device_twin_update_result_from(result);
+
+		twin_ctx->on_send_twin_update_complete_callback(device_result, status_code, twin_ctx->context);
+
+		free(twin_ctx);
+	}
+}
+
+static void on_twin_state_update_callback(TWIN_UPDATE_TYPE update_type, const char* payload, size_t size, void* context)
+{
+	if (payload == NULL || context == NULL)
+	{
+		LogError("Invalid argument (context=%p, payload=%p)", context, payload);
+	}
+	else
+	{
+		DEVICE_INSTANCE* instance = (DEVICE_INSTANCE*)context;
+
+		DEVICE_TWIN_UPDATE_TYPE device_update_type;
+
+		if (update_type == TWIN_UPDATE_TYPE_COMPLETE)
+		{
+			device_update_type = DEVICE_TWIN_UPDATE_TYPE_COMPLETE;
+		}
+		else
+		{
+			device_update_type = DEVICE_TWIN_UPDATE_TYPE_PARTIAL;
+		}
+
+		instance->on_device_twin_update_received_callback(device_update_type, (const unsigned char*)payload, size, instance->on_device_twin_update_received_context);
+	}
+}
+
+static void on_twin_messenger_state_changed_callback(void* context, TWIN_MESSENGER_STATE previous_state, TWIN_MESSENGER_STATE new_state)
+{
+	if (context != NULL && new_state != previous_state)
+	{
+		DEVICE_INSTANCE* instance = (DEVICE_INSTANCE*)context;
+		instance->twin_msgr_state = new_state;
+
+		if ((instance->twin_msgr_state_last_changed_time = get_time(NULL)) == INDEFINITE_TIME)
+		{
+			LogError("Failed setting time of last twin messenger state changed event");
+		}
+	}
+}
+
+
+//---------- Message Dispostion ----------//
 
 static DEVICE_MESSAGE_DISPOSITION_INFO* create_device_message_disposition_info_from(TELEMETRY_MESSENGER_MESSAGE_DISPOSITION_INFO* messenger_disposition_info)
 {
@@ -339,7 +435,9 @@ static TELEMETRY_MESSENGER_DISPOSITION_RESULT on_messenger_message_received_call
     return msgr_disposition_result;
 }
 
-// Configuration Helpers
+
+//---------- Configuration Helpers ----------//
+
 static void destroy_device_config(DEVICE_CONFIG* config)
 {
     if (config != NULL)
@@ -447,7 +545,7 @@ static int create_authentication_instance(DEVICE_INSTANCE *instance)
     return result;
 }
 
-static int create_messenger_instance(DEVICE_INSTANCE* instance, const char* pi)
+static int create_telemetry_messenger_instance(DEVICE_INSTANCE* instance, const char* pi)
 {
     int result;
 
@@ -470,7 +568,27 @@ static int create_messenger_instance(DEVICE_INSTANCE* instance, const char* pi)
     return result;
 }
 
+static TWIN_MESSENGER_HANDLE create_twin_messenger(DEVICE_INSTANCE* instance)
+{
+	TWIN_MESSENGER_HANDLE twin_msgr;
+	TWIN_MESSENGER_CONFIG twin_msgr_config;
+
+	twin_msgr_config.device_id = instance->config->device_id;
+	twin_msgr_config.iothub_host_fqdn = instance->config->iothub_host_fqdn;
+	twin_msgr_config.on_state_changed_callback = on_twin_messenger_state_changed_callback;
+	twin_msgr_config.on_state_changed_context = (void*)instance;
+
+	if ((twin_msgr = twin_messenger_create(&twin_msgr_config)) == NULL)
+	{
+		LogError("Failed creating the twin messenger");
+	}
+
+	return twin_msgr;
+}
+
+
 // ---------- Set/Retrieve Options Helpers ----------//
+
 static void* device_clone_option(const char* name, const void* value)
 {
     void* result;
@@ -520,7 +638,9 @@ static void device_destroy_option(const char* name, const void* value)
     }
 }
 
-// Public APIs:
+
+//---------- Public APIs ----------//
+
 DEVICE_HANDLE device_create(DEVICE_CONFIG *config)
 {
     DEVICE_INSTANCE *instance;
@@ -574,7 +694,7 @@ DEVICE_HANDLE device_create(DEVICE_CONFIG *config)
             result = __FAILURE__;
         }
         // Codes_SRS_DEVICE_09_008: [`instance->messenger_handle` shall be set using telemetry_messenger_create()]
-        else if (create_messenger_instance(instance, config->product_info) != RESULT_OK)
+        else if (create_telemetry_messenger_instance(instance, config->product_info) != RESULT_OK)
         {
             // Codes_SRS_DEVICE_09_009: [If the TELEMETRY_MESSENGER_HANDLE fails to be created, device_create shall fail and return NULL]
             LogError("Failed creating the device instance for device '%s' (failed creating the messenger instance)", instance->config->device_id);
@@ -1314,4 +1434,127 @@ OPTIONHANDLER_HANDLE device_retrieve_options(DEVICE_HANDLE handle)
     }
 
     return result;
+}
+
+int device_send_twin_update_async(DEVICE_HANDLE handle, CONSTBUFFER_HANDLE data, DEVICE_SEND_TWIN_UPDATE_COMPLETE_CALLBACK on_send_twin_update_complete_callback, void* context)
+{
+	int result;
+
+	if (handle == NULL || data == NULL)
+	{
+		LogError("Invalid argument (handle=%p, data=%p)");
+		result = __FAILURE__;
+	}
+	else
+	{
+		DEVICE_INSTANCE* instance = (DEVICE_INSTANCE*)handle;
+
+		if (instance->twin_messenger_handle == NULL &&
+			(instance->twin_messenger_handle = create_twin_messenger(instance)) == NULL)
+		{
+			LogError("Cannot send twin update (failed creating TWIN messenger)");
+			result = __FAILURE__;
+		}
+		else
+		{
+			DEVICE_SEND_TWIN_UPDATE_CONTEXT* twin_ctx;
+
+			if ((twin_ctx = (DEVICE_SEND_TWIN_UPDATE_CONTEXT*)malloc(sizeof(DEVICE_SEND_TWIN_UPDATE_CONTEXT))) == NULL)
+			{
+				LogError("Cannot send twin update (failed creating TWIN context)");
+				result = __FAILURE__;
+			}
+			else
+			{
+				twin_ctx->on_send_twin_update_complete_callback = on_send_twin_update_complete_callback;
+				twin_ctx->context = context;
+
+				if (twin_messenger_report_state_async(instance->twin_messenger_handle, data, on_report_state_complete_callback, (void*)twin_ctx) != 0)
+				{
+					LogError("Cannot send twin update (failed creating TWIN messenger)");
+					free(twin_ctx);
+					result = __FAILURE__;
+				}
+				else
+				{
+					result = RESULT_OK;
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
+int device_subscribe_for_twin_updates(DEVICE_HANDLE handle, DEVICE_TWIN_UPDATE_RECEIVED_CALLBACK on_device_twin_update_received_callback, void* context)
+{
+	int result;
+
+	if (handle == NULL || on_device_twin_update_received_callback == NULL)
+	{
+		LogError("Invalid argument (handle=%p, on_device_twin_update_received_callback=%p)", handle, on_device_twin_update_received_callback);
+		result = __FAILURE__;
+	}
+	else
+	{
+		DEVICE_INSTANCE* instance = (DEVICE_INSTANCE*)handle;
+
+		if (instance->twin_messenger_handle == NULL &&
+			(instance->twin_messenger_handle = create_twin_messenger(instance)) == NULL)
+		{
+			LogError("Failed creating TWIN messenger");
+			result = __FAILURE__;
+		}
+		else
+		{
+			DEVICE_TWIN_UPDATE_RECEIVED_CALLBACK previous_callback = instance->on_device_twin_update_received_callback;
+			void* previous_context = instance->on_device_twin_update_received_context;
+
+			instance->on_device_twin_update_received_callback = on_device_twin_update_received_callback;
+			instance->on_device_twin_update_received_context = context;
+
+			if (twin_messenger_subscribe(instance->twin_messenger_handle, on_twin_state_update_callback, (void*)instance) != 0)
+			{
+				LogError("Failed subscribing for device twin updates");
+				instance->on_device_twin_update_received_callback = previous_callback;
+				instance->on_device_twin_update_received_context = previous_context;
+				result = __FAILURE__;
+			}
+			else
+			{
+				result = RESULT_OK;
+			}
+		}
+	}
+
+	return result;
+}
+
+int device_unsubscribe_for_twin_updates(DEVICE_HANDLE handle)
+{
+	int result;
+
+	if (handle == NULL)
+	{
+		LogError("Invalid argument (handle is NULL)");
+		result = __FAILURE__;
+	}
+	else
+	{
+		DEVICE_INSTANCE* instance = (DEVICE_INSTANCE*)handle;
+
+		if (twin_messenger_unsubscribe(instance->twin_messenger_handle) != 0)
+		{
+			LogError("Failed unsubscribing for device twin updates");
+			result = __FAILURE__;
+		}
+		else
+		{
+			instance->on_device_twin_update_received_callback = NULL;
+			instance->on_device_twin_update_received_context = NULL;
+			result = RESULT_OK;
+		}
+	}
+
+	return result;
 }
