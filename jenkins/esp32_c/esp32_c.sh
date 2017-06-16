@@ -19,8 +19,6 @@ fi
 pwd
 cd jenkins/esp32_c/test_build
 echo "building in" $(pwd)
-echo "workspace dir result:"
-dir /home/jenkins/workspace
 echo "making now"
 make
 if [ $? = 0 ]
